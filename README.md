@@ -1,16 +1,10 @@
-# naqs_devices_template_device
-
-This repository is both a template to follow for a labscript-device belonging
-to a namespace (here `naqs_devices`) as well as a github template repository.
-Use the green `Use this template` button above to copy the files and structure
-of this repository to fit your new device. You will need to modify at least
-`pyproject.toml`, `README.md`, `index.rst`, `conf.py`, and everything in `src/`.
+# naqs_devices_HeliCam
 
 ## Directory structure
 
 ```text
 
-└── naqs_devices_template_device/
+└── naqs_devices_HeliCam/
     ├── .gitignore
     ├── pyproject.toml
     ├── README.md
@@ -22,7 +16,7 @@ of this repository to fit your new device. You will need to modify at least
     │   ├── Makefile
     │   └── index.rst
     └── src/naqs_devices/ # note: must be same as in the parent naqs_devices repo to be in the same namespace
-        └── TemplateDevice/
+        └── HeliCam/
             ├── __init__.py
             ├── blacs_tabs.py
             ├── blacs_workers.py

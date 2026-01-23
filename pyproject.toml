@@ -9,9 +9,9 @@ include-package-data = true
 [tool.setuptools.package-dir]
 "naqs_devices" = "./src/naqs_devices" 
 
-# This controls the version from the src/naqs_devices/TemplateDevice/__init__.py
+# This controls the version from the src/naqs_devices/HeliCam/__init__.py
 [tool.setuptools.dynamic]
-version = {attr = "naqs_devices.TemplateDevice.__version__"}
+version = {attr = "naqs_devices.HeliCam.__version__"}
 
 [project]
 # Update the keys [name, description, authors]
@@ -20,8 +20,8 @@ version = {attr = "naqs_devices.TemplateDevice.__version__"}
 # The first is the parent namespace
 # Then labscript components
 
-name = "naqs_devices_template_device" 
-description = "Template repository to create devices within the naqs_device namespace"
+name = "naqs_devices_HeliCam" 
+description = "Heliotis HeliCam C3"
 authors = [{name = "naqslab", email = "naqslab@gmail.com"}]
 dynamic = ["version"] # go check this in the docs
 license = {file = 'LICENSE.txt'}

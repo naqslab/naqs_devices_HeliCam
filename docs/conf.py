@@ -18,11 +18,11 @@ import importlib.metadata
 
 # -- Project information -----------------------------------------------------
 
-project = 'naqs_devices_template_device'
+project = 'naqs_devices_HeliCam'
 copyright = '2025, naqslab'
 author = 'naqslab'
 
-version = importlib.metadata.version('naqs_devices_template_device')
+version = importlib.metadata.version('naqs_devices_HeliCam')
 # long version
 release = version
 

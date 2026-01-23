@@ -1,5 +1,5 @@
-Template Device for Labscript
-=============================
+Heliotis HeliCam Camera
+=======================
 
 .. toctree::
    :maxdepth: 2
@@ -17,24 +17,24 @@ API Documentation
 .. Double check this list actually does include the correct set of files for
 .. your device! (E.g. you may not have a runviewer parser file)
 
-.. automodule:: naqs_devices.TemplateDevice.labscript_devices
+.. automodule:: naqs_devices.HeliCam.labscript_devices
    :members:
    :undoc-members:
    :show-inheritance:
 
    
-.. automodule:: naqs_devices.TemplateDevice.blacs_tabs
+.. automodule:: naqs_devices.HeliCam.blacs_tabs
    :members:
    :undoc-members:
    :show-inheritance:
 
    
-.. automodule:: naqs_devices.TemplateDevice.blacs_workers
+.. automodule:: naqs_devices.HeliCam.blacs_workers
    :members:
    :undoc-members:
    :show-inheritance:
    
-.. automodule:: naqs_devices.TemplateDevice.runviewer_parsers
-   :members:
-   :undoc-members:
-   :show-inheritance:
+.. .. automodule:: naqs_devices.HeliCam.runviewer_parsers
+..    :members:
+..    :undoc-members:
+..    :show-inheritance:
