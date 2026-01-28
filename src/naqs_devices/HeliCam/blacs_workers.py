@@ -68,6 +68,7 @@ class MockCamera(object):
         print("Starting device worker as a mock device")
         self.attributes = {}
         self.exception_on_failed_shot = True
+        self.heSys = None
 
     def set_attributes(self, attributes):
         self.attributes.update(attributes)
@@ -149,7 +150,7 @@ class HeliCamInterface(object):
     MAX_SENSOR_WIDTH = 300
     MAX_SENSOR_HEIGHT = 300
     
-    def __init__(self, serial_number):
+    def __init__(self, serial_number, initial_attributes):
         if LibHeLIC is None:
             raise RuntimeError(
                 "libHeLIC not found. Please install the Heliotis HeliCam Python library."
@@ -172,7 +173,9 @@ class HeliCamInterface(object):
         
         self.exception_on_failed_shot = True
         self._abort_acquisition = False
-        self.attributes = {}
+        # self.attributes = {}
+        self.attributes = dict(initial_attributes)
+        self.configure(self.attributes)
         print("HeliCam initialized successfully")
 
     def set_attributes(self, attr_dict):
@@ -206,31 +209,29 @@ class HeliCamInterface(object):
         # This is a simplified version - full attribute enumeration would require
         # introspection of the heSys.map object
         return list(self.attributes.keys())
-
-    def snap(self, integrated_frames, settings: tuple | dict):
-        """Acquire a single image and return it as numpy array"""
-
-            # rd = self.heSys.GetRegDesc()
+    
+    def configure(self, settings: tuple | dict):
+        """Wraps the config step into one method"""
         if isinstance(settings, tuple):
             settings = dict(settings)
-        try:
-            for k, v in settings.items():
-                setattr(self.heSys.map, k, v)
-        except Exception as e:
-            print(f"Failed to set attribute {k}: {e}")
-                    
-        res = self.heSys.Acquire()
-        print("Acquire returned:", res)
-
-        # setattr(self.heSys.map, 'SingleVolume', 1)  # Force single acquisition
-        # setattr(self.heSys.map, 'AcqStop', 0)  # Acquisition running
+        self.set_attributes(settings)
         
         if settings['CamMode'] == 0:
             self.heSys.AllocCamData(1, LibHeLIC.CamDataFmt['DF_I16Q16'], 0, 0, 0)
         elif settings['CamMode'] == 3:
             self.heSys.AllocCamData(1, LibHeLIC.CamDataFmt['DF_Hf'], 0, 0, 0)
         else:
-            raise LabscriptError("Invalid CamMode, supported are: 0 - RAW_IQ, 3 - INTENSITY (HDR)")
+            raise LabscriptError("Invalid CamMode, supported are: 0 - RAW_IQ, 3 - INTENSITY (HDR)")                    
+
+    def snap(self, integrated_frames, settings: tuple | dict):
+        """Acquire a single image and return it as numpy array"""
+
+        self.configure(settings)
+        res = self.heSys.Acquire()
+        print("Acquire returned:", res)
+
+        # setattr(self.heSys.map, 'SingleVolume', 1)  # Force single acquisition
+        # setattr(self.heSys.map, 'AcqStop', 0)  # Acquisition running
 
         # gc1 = self.heSys.GetCamData(1, 0, 0)
         # print(f"GetCamData1: {gc1}")
@@ -248,6 +249,11 @@ class HeliCamInterface(object):
         # Q_view = data[:, :, :, 1]
         # I = np.ascontiguousarray(I_view)
         # Q = np.ascontiguousarray(Q_view)
+        
+        # # Return back to external triggering if this was the original setting
+        # if trigger_mode != 1:
+        #     print("Returning back to external triggering")
+        #     settings['TrigFreeExtN'] = 0
             
         return amplitude
 
@@ -267,17 +273,16 @@ class HeliCamInterface(object):
             
             num_frames = self.attributes.get('SensNFrames', 1)
             num_frames = int(num_frames)
-            cam_mode = self.attributes.get('CamMode', 1)
-            if cam_mode == 0:
-                self.heSys.AllocCamData(1, LibHeLIC.CamDataFmt['DF_I16Q16'], 0, 0, 0)
-            elif cam_mode == 3:
-                self.heSys.AllocCamData(1, LibHeLIC.CamDataFmt['DF_Hf'], 0, 0, 0)
-            else:
-                raise LabscriptError("Invalid CamMode, supported are: 0 - RAW_IQ, 3 - INTENSITY (HDR)")
+            # cam_mode = self.attributes.get('CamMode', 1)
+            # if cam_mode == 0:
+            #     self.heSys.AllocCamData(1, LibHeLIC.CamDataFmt['DF_I16Q16'], 0, 0, 0)
+            # elif cam_mode == 3:
+            #     self.heSys.AllocCamData(1, LibHeLIC.CamDataFmt['DF_Hf'], 0, 0, 0)
+            # else:
+            #     raise LabscriptError("Invalid CamMode, supported are: 0 - RAW_IQ, 3 - INTENSITY (HDR)")
             
             res = self.heSys.Acquire()
-            if res != 0:
-                print(f"Acquire returned: {res}")
+            print(f"Acquire returned: {res}")
             
             cd = self.heSys.ProcessCamData(1, 0, 0)
             img = self.heSys.GetCamData(1, 0, 0)
@@ -407,7 +412,10 @@ class HeliCamWorker(Worker):
         if self.mock:
             return MockCamera()
         else:
-            return self.interface_class(self.serial_number)
+            return self.interface_class(
+                serial_number=self.serial_number,
+                initial_attributes=self.camera_attributes,
+            )
 
     def set_attributes_smart(self, attributes):
         """Call self.camera.set_attributes() to set the given attributes, only setting
@@ -512,6 +520,8 @@ class HeliCamWorker(Worker):
             self.continuous_dt = None
 
     def transition_to_buffered(self, device_name, h5_filepath, initial_values, fresh):
+        
+        print(f"{initial_values=}")
         if getattr(self, 'is_remote', False):
             h5_filepath = path_to_local(h5_filepath)
         if self.continuous_thread is not None:
@@ -519,7 +529,7 @@ class HeliCamWorker(Worker):
             self.stop_continuous(pause=True)
         with h5py.File(h5_filepath, 'r') as f:
             group = f['devices'][self.device_name]
-            if not 'EXPOSURES' in group:
+            if 'EXPOSURES' not in group:
                 return {}
             self.h5_filepath = h5_filepath
             self.exposures = group['EXPOSURES'][:]
@@ -672,6 +682,8 @@ class HeliCamWorker(Worker):
         return self.abort()
 
     def program_manual(self, values):
+        
+        # It may be better to use set_attributes_smart() here
         self.logger.info(values)
         self.logger.info(f"Before: {self.manual_mode_camera_attributes}")
         self.camera.set_attributes(values)

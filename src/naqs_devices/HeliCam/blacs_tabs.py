@@ -171,9 +171,9 @@ class HeliCamTab(DeviceTab):
         # Populate line edits with initial values from camera attributes
         device = self.settings['connection_table'].find_by_name(self.device_name)
         
-        init_freq = device.properties['manual_mode_camera_attributes']['SensTqp']
+        device_props = device.properties['manual_mode_camera_attributes']
         
-        print(f"{init_freq=}")
+        print(f"{device_props=}")
         
         
         layout = self.get_tab_layout()
