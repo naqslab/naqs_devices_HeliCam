@@ -255,6 +255,7 @@ class HeliCam(TriggerableDevice):
         if not trigger_duration > 0:
             msg = "trigger_duration must be > 0, not %s" % str(trigger_duration)
             raise ValueError(msg)
+        print(f"Triggering now at {t} for duration {trigger_duration}")
         self.trigger(t, trigger_duration)
         self.exposures.append((t, name, frametype, trigger_duration))
         return trigger_duration
