@@ -8,21 +8,21 @@
     ├── .gitignore
     ├── pyproject.toml
     ├── README.md
-    ├── LICENSE.txt # Choose a license, labscript uses BSD
-    ├── CITATION.cff # Optional to define citation for citing the device repository
+    ├── LICENSE.txt
+    ├── CITATION.cff
     ├── docs/
     │   ├── conf.py
     │   ├── make.bat
     │   ├── Makefile
     │   └── index.rst
-    └── src/naqs_devices/ # note: must be same as in the parent naqs_devices repo to be in the same namespace
+    └── src/naqs_devices/
         └── HeliCam/
             ├── __init__.py
             ├── blacs_tabs.py
             ├── blacs_workers.py
             ├── labscript_devices.py
             ├── register_classes.py
-            └── runviewer_parsers.py
+            └── runviewer_parsers.py # TODO?
 ```
 
 ## Example Connection Table
@@ -70,6 +70,23 @@ if __name__ == "__main__":
 
 
 ```
+
+## The Device Driver
+
+This labscript device driver is made for the Heliotis HeliCam C3 Lock-In Camera.
+The important user controllable parameters in the GUI are:
+
+| Parameter | Explanation | Range |
+| --------- | ----------- | ----- |
+| `SensNFrames` | The number of frames in a fully integrated image, called a volume | (10, 511) |
+| `SensNavM2` | The number of demodulation cycles per frame is `SensNavM2`*2 + 2 | (0, 255) |
+| `SensTqp` | The time quarter period of the sensor demodulation stage | (0, 4095) |
+
+Note that the demodulation frequency $f_d$ is found from $f_d = \frac{f_{sensor}}{8(SensTqp + 30)}$ where the sensor frequency $f_{sensor}$ is 70 MHz.
+
+The BLACS tab provides `snap` and `continuous` acquisitions. The logs will report
+many calls to the LibHeLIC's `Acquire()`, which returns either a negative value (usually -116)
+or the size of the buffer allocated.s
 
 ## How to document your device
 
