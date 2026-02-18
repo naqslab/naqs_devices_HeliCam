@@ -259,6 +259,39 @@ class HeliCam(TriggerableDevice):
         self.trigger(t, trigger_duration)
         self.exposures.append((t, name, frametype, trigger_duration))
         return trigger_duration
+    
+    def frequency_to_tqp(freq):
+        """
+        Helper to get the TQP (Time Quarter Period).
+        The camera API maps the allowed frequency range of (2, 250) KHz to 
+        (0, 4095), with 4095 corresponding to the lower frequency limit.
+        
+        The documentation notes that the following formula assumes a sensor
+        frequency of 70 MHz.
+        This is hardcoded here because feasibly this value does not change.
+        
+        Args:
+            freq (float): demodulation frequency in Hz
+        Returns:
+            tqp (int):
+                Time Quarter Period
+        """
+        tqp = 70e6 / (8 * freq) - 30
+        assert tqp < 4096, f"Rquested Frequency {freq} out of bounds (too low)"
+        return int(tqp)
+    
+    def tqp_to_frequency(tqp: int):
+        """
+        Inversion of :meth:`naqs_devices.HeliCam.frequency_to_tqp`.
+        
+        Args:
+            tqp (int):
+                Time Quarter Period
+        Returns:
+            freq (float): demodulation frequency in Hz
+        """
+        freq = (70e6 / 8) * (1 / (tqp + 30))
+        return freq # in Hz
 
     def generate_code(self, hdf5_file):
         """Generate code for the device and save exposure information to HDF5.

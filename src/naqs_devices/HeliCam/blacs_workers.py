@@ -172,15 +172,8 @@ class HeliCamInterface(object):
         
         self.exception_on_failed_shot = True
         self._abort_acquisition = False
-        # self.attributes = {}
         self.attributes = dict(initial_attributes)
-        # self.configure_acquisition()
         print("HeliCam connected successfully")
-        
-        # print(self.heSys.CamDataHdr.nVolume.size)
-        # print(self.heSys.CamDataHdr.nVolume.offset)
-        # print(self.heSys.CamDataHdr.nFrames.size)
-        # print(self.heSys.CamDataHdr.nFrames.offset)
 
     def set_attributes(self, attr_dict):
         """Set multiple camera attributes from a dictionary"""
@@ -421,7 +414,7 @@ class HeliCamWorker(Worker):
         self.exposures = None
         self.acquisition_thread = None
         self.h5_filepath = None
-        self.stop_acquisition_timeout = None
+        self.stop_acquisition_timeout = None # TODO: Use this to break out of transition_to_buffered?
         self.exception_on_failed_shot = None
         self.continuous_stop = threading.Event()
         self.continuous_thread = None
@@ -716,14 +709,11 @@ class HeliCamWorker(Worker):
 
     def program_manual(self, values):
         
-        # It may be better to use set_attributes_smart() here
-        # self.logger.info(f"Before: {self.manual_mode_camera_attributes}")
+        self.logger.info("Returning to values for manual mode")
         self.camera.set_attributes(values)
         
         for k, v in values.items():
             self.manual_mode_camera_attributes[k] = v
-            
-        # self.logger.info(f"After: {self.manual_mode_camera_attributes}")
         
         print(self.camera.heSys.Acquire())
         return {}
