@@ -270,6 +270,7 @@ class HeliCam(TriggerableDevice):
             hdf5_file (h5py.File):
                 The HDF5 file object to write to
         """
+        self.do_checks()
         
         vlenstr = h5py.special_dtype(vlen=str)
         table_dtypes = [

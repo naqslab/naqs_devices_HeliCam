@@ -27,7 +27,6 @@ Dependencies:
 
 import sys
 from time import perf_counter
-import time
 from blacs.tab_base_classes import Worker
 import threading
 import numpy as np
@@ -176,7 +175,12 @@ class HeliCamInterface(object):
         # self.attributes = {}
         self.attributes = dict(initial_attributes)
         # self.configure_acquisition()
-        print("HeliCam initialized successfully")
+        print("HeliCam connected successfully")
+        
+        # print(self.heSys.CamDataHdr.nVolume.size)
+        # print(self.heSys.CamDataHdr.nVolume.offset)
+        # print(self.heSys.CamDataHdr.nFrames.size)
+        # print(self.heSys.CamDataHdr.nFrames.offset)
 
     def set_attributes(self, attr_dict):
         """Set multiple camera attributes from a dictionary"""
@@ -205,10 +209,13 @@ class HeliCamInterface(object):
 
     def get_attribute_names(self, visibility_level=None):
         """Return list of available attribute names"""
-        # For libHeLIC, return the attributes we know about from the map
-        # This is a simplified version - full attribute enumeration would require
-        # introspection of the heSys.map object
-        return list(self.attributes.keys())
+        rd = self.heSys.GetRegDesc()
+
+        attribute_dict = self.heSys.MapByName(rd, self.heSys).as_dict()
+        if visibility_level=="Advanced":
+            return [str(x.decode()) for x in attribute_dict.keys()]
+        else:
+            return list(self.attributes.keys())
     
     def get_demod_freq(self, tqp):
         f = (70e6 / 8) * (1 / (tqp + 30))
@@ -218,39 +225,6 @@ class HeliCamInterface(object):
         tqp = 70e6 / (8 * demod_freq) - 30
         return tqp
     
-    # def get_framerate(self):
-    #     SensTqp = self.attributes.get('SensTqp')
-    #     demod_freq = self.get_demod_freq(SensTqp)
-    #     print(f"{demod_freq =:.4f}Hz")
-    #     max_framerate = 3800 # frames / sec
-    #     CalDur1Cyc = self.attributes.get('CalDur1Cyc')
-    #     SensCaldur = self.attributes.get('SensCaldur')
-    #     SensNavM2 = self.attributes.get('SensNavM2')
-    #     SensNFrames = self.attributes.get('SensNFrames')
-    #     if CalDur1Cyc == 1:
-    #         print('Offset compensation takes exactly 1 cycle')
-    #         T_offset = 1 / 70e6
-    #     else:
-    #         print('Offset compensation uses "SensCaldur" register')
-    #         T_offset = (SensCaldur + 58) / 35e6 
-            
-    #     num_demod_cycles = SensNavM2 * 2 + 2
-    #     time_between_frames = (num_demod_cycles / demod_freq) + T_offset
-    #     framerate = 1 / time_between_frames
-    #     print(f"Got: {SensTqp=}")
-    #     print(f"Got: {SensNavM2=}")
-    #     print(f"Got: {SensNFrames=}")
-    #     print(f"Got: {CalDur1Cyc=}")
-    #     print(f"Got: {SensCaldur=}")
-    #     print(f"Got: {T_offset=} s")
-    #     print(f"Got: {time_between_frames=} s")
-    #     if framerate > max_framerate:
-    #         print(f'WARN: Requested {framerate:.2f} fps is higher than max allowed {max_framerate} fps')
-    #         # EARLY RETURN!
-    #         return   
-    #     print(f"Got: {framerate=} fps")
-    
-
     def snap(self, integrated_frames, settings: tuple | dict):
         """Acquire a single image and return it as numpy array"""
 
@@ -258,20 +232,15 @@ class HeliCamInterface(object):
         res = self.heSys.Acquire()
         print("Acquire returned:", res)
         cd = self.heSys.ProcessCamData(idx=1, mode=0, param=0)
+        print("ProcessCamData returned", cd.contents.data)
         img = self.heSys.GetCamData(idx=1, addRef=0, meta=0)
         
         data = img.contents.data
         data = LibHeLIC.Ptr2Arr(data, (integrated_frames, 300, 300, 2), ct.c_int16)
         amplitude = data[1:,:,:,:].sum(axis=3, dtype=np.int16)
-        
-        # # Return back to external triggering if this was the original setting
-        # if trigger_mode != 1:
-        #     print("Returning back to external triggering")
-        #     settings['TrigFreeExtN'] = 0
-            
         return amplitude
 
-    def configure_acquisition(self, continuous=True, bufferCount=5):
+    def configure_acquisition(self, continuous=True, bufferCount=1):
         """Configure camera for acquisition (buffered or continuous)"""
         settings = self.attributes.copy()
         if isinstance(settings, tuple):
@@ -306,28 +275,30 @@ class HeliCamInterface(object):
             f"Configured for acquisition (continuous={continuous}, buffers={bufferCount})"
         )
 
-    def grab(self, waitForNextBuffer=True):
-        """Acquire a single frame"""
+    def grab(self, waitForNextBuffer=True, skipAcquire=False):
+        """Acquire a single frame, returns image as np.array
+        """
         try:
             if self._abort_acquisition:
                 raise RuntimeError("Acquisition aborted")
             
-            self.set_attribute('SingleVolume', 1)
-            num_frames = self.attributes.get('SensNFrames', 1)
+            num_frames = self.attributes.get('SensNFrames')
             num_frames = int(num_frames)
 
-            res = self.heSys.Acquire()
-            print(f"Acquire returned: {res}")
-            
+            if not skipAcquire:
+                res = self.heSys.Acquire()
+                print(f"Acquire in grab() returned: {res}")
             cd = self.heSys.ProcessCamData(1, 0, 0)
             img = self.heSys.GetCamData(1, 0, 0)
+
             data = img.contents.data
             
-            # print(f'grab() reporting {num_frames} frames')
             data_array = LibHeLIC.Ptr2Arr(
                 data, (num_frames, 300, 300, 2), ct.c_int16
             )
             
+            # This is distinctly different from snap since all frames are to
+            # be integrated over
             amplitude = data_array.sum(axis=0, dtype=np.int16).sum(axis=2, dtype=np.int16)
 
             return amplitude
@@ -335,17 +306,37 @@ class HeliCamInterface(object):
         except Exception as e:
             raise RuntimeError(f"Failed to grab frame: {e}") from e
 
-    def grab_multiple(self, n_images, images, waitForNextBuffer=True):
+    def grab_multiple(self, n_images, images, exposures=None, waitForNextBuffer=True):
         """Acquire multiple frames and append to images list"""
         print(f"Attempting to grab {n_images} images.")
+        
+        # Note: the following logic reimplements Imaqdx's waitForNextBuffer
+        # I should make sure that it is True for external timing, but not for 
+        # internal
+        
+        # force -1 since Acquire's "error" state will always be -116
+        res = -1
         for i in range(n_images):
             if self._abort_acquisition:
                 print("Abort during acquisition.")
                 self._abort_acquisition = False
                 break
             try:
-                images.append(self.grab(waitForNextBuffer))
+                
+                # catch both cases where we're not triggered and not ready to 
+                # return an image
+                while res < 1:
+                    print(f'waiting for trigger, got {res}')
+                    res = self.heSys.Acquire()
+                    
+                # exiting the while means Acquire should be responding with 
+                # the size of the buffer *with* an image inside
+                print(f'Trigger received, got {res}')
+                images.append(self.grab(waitForNextBuffer, skipAcquire=True))
                 print(f"Got image {i+1} of {n_images}.")
+                
+                # Reset our error handler variable
+                res = -1
             except Exception as e:
                 if self.exception_on_failed_shot:
                     raise
@@ -358,7 +349,9 @@ class HeliCamInterface(object):
     def stop_acquisition(self):
         """Stop image acquisition"""
         try:
-            # libHeLIC acquisition is per-frame, nothing special to stop
+            # I have not found anything in the SDK that will actually "Stop"
+            # an acquisition, but it's mostly frame by frame anyways
+            
             print("Acquisition stopped")
         except Exception as e:
             raise RuntimeError(f"Failed to stop acquisition: {e}") from e
@@ -503,7 +496,7 @@ class HeliCamWorker(Worker):
 
     def continuous_loop(self, dt):
         """Acquire continuously in a loop, with minimum repetition interval dt"""
-        self.camera.configure_acquisition(continuous=True, bufferCount=5)
+        self.camera.configure_acquisition(continuous=True, bufferCount=1)
         while True:
             if dt is not None:
                 t = perf_counter()
@@ -529,6 +522,7 @@ class HeliCamWorker(Worker):
         """
         assert self.continuous_thread is None, "Continuous acquisition is already running."
         # Apply manual mode attributes for responsive live view
+        # I may force TrigFreeExtN = 1
         self.set_attributes_smart(self.manual_mode_camera_attributes)
         self.camera.configure_acquisition(continuous=True)  # Ensure continuous mode is enabled
         self.continuous_stop.clear()  # Reset the stop event
@@ -603,6 +597,8 @@ class HeliCamWorker(Worker):
         return {}
 
     def transition_to_manual(self):
+
+        self.logger.info('Got to transition_to_manual')
         if self.h5_filepath is None:
             print('No camera exposures in this shot.\n')
             return True
@@ -684,7 +680,7 @@ class HeliCamWorker(Worker):
         self.h5_filepath = None
         self.stop_acquisition_timeout = None
         self.exception_on_failed_shot = None
-        print("Setting manual mode camera attributes.\n")
+        self.logger.info("Setting manual mode camera attributes.\n")
         self.set_attributes_smart(self.manual_mode_camera_attributes)
         if self.continuous_dt is not None:
             # If continuous manual mode acquisition was in progress before the bufferd
