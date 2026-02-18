@@ -30,43 +30,57 @@
 ```python
 
 from labscript import *
-from labscript_devices.HeliCam.labscript_devices import HeliCam
-from labscript_devices.DummyPseudoclock.labscript_devices import DummyPseudoclock
-from labscript_devices.DummyIntermediateDevice import DummyIntermediateDevice
+from naqs_devices.HeliCam.labscript_devices import HeliCam
+from labscript_devices.PrawnBlaster.labscript_devices import PrawnBlaster
+from labscript_devices.PrawnDO.labscript_devices import PrawnDO
 
-
-dummy_clock = DummyPseudoclock(name="dummy_clock", BLACS_connection="dummy")
-dummy_daq = DummyIntermediateDevice(
-    name="dummy_device", BLACS_connection="dummy2", parent_device=dummy_clock.clockline
+prawn = PrawnBlaster(
+    name="prawn",
+    com_port="COM5",
+    pico_board="pico2",
+    num_pseudoclocks=1,
+    clock_frequency=150e6,
 )
 
-settings={
+prawn_do = PrawnDO(
+    name="prawn_do",
+    com_port="COM3",
+    clock_line=prawn.clocklines[0],
+    external_clock=False,
+)
+
+settings = {
     "SensTqp": 4095,
     "SensNFrames": 16,
-    "SensNavM2": 255,
+    "SensNavM2": 1,
     "CamMode": 0,
     "DdsGain": 2,
     "BSEnable": 0,
-    "TrigFreeExtN": 1,
+    "TrigFreeExtN": 0,
+    'ExtTqp': 0,
+    'EnTrigOnPos': 0,
     "TrigExtSrcSel": 0,
     "AcqStop": 0,
     "EnSynFOut": 1,
 }
+manual_settings = settings.copy()
+manual_settings["TrigFreeExtN"] = 1
 
 camera = HeliCam(
     name="helicam",
-    parent_device=dummy_daq,
-    connection="c3cam_s170",
+    parent_device=prawn_do.outputs,
+    connection="do0",
     serial_number="008650",
     camera_attributes=settings,
-    manual_mode_camera_attributes=settings,
-    trigger_duration=2e-6
+    manual_mode_camera_attributes=manual_settings,
+    trigger_duration=2000e-6,
 )
+
 
 if __name__ == "__main__":
     start()
-
     stop(1)
+
 
 
 ```
