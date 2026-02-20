@@ -220,10 +220,12 @@ class HeliCamInterface(object):
     
     def snap(self, integrated_frames, settings: tuple | dict):
         """Acquire a single image and return it as numpy array"""
+        res = self.heSys.Acquire() # WHY DOES THIS WORK????
+        print("Snap Acquire 0 returned:", res) # Not -116 for some reason?
 
         self.configure_acquisition(continuous=False, bufferCount=1)
         res = self.heSys.Acquire()
-        print("Acquire returned:", res)
+        print("Snap Acquire 1 returned:", res)
         cd = self.heSys.ProcessCamData(idx=1, mode=0, param=0)
         print("ProcessCamData returned", cd.contents.data)
         img = self.heSys.GetCamData(idx=1, addRef=0, meta=0)
@@ -310,21 +312,26 @@ class HeliCamInterface(object):
         # force -1 since Acquire's "error" state will always be -116
         res = -1
         for i in range(n_images):
-            if self._abort_acquisition:
-                print("Abort during acquisition.")
-                self._abort_acquisition = False
-                break
             try:
-                
                 # catch both cases where we're not triggered and not ready to 
                 # return an image
                 while res < 1:
+                    if self._abort_acquisition:
+                        print("Abort during acquisition.")
+                        self._abort_acquisition = False
+                        # break
+                        return # thread should exit on abort
                     print(f'waiting for trigger, got {res}')
                     res = self.heSys.Acquire()
                     
                 # exiting the while means Acquire should be responding with 
                 # the size of the buffer *with* an image inside
                 print(f'Trigger received, got {res}')
+                if self._abort_acquisition:
+                    print("Abort during acquisition.")
+                    self._abort_acquisition = False
+                    # break
+                    return # thread should exit on abort
                 images.append(self.grab(waitForNextBuffer, skipAcquire=True))
                 print(f"Got image {i+1} of {n_images}.")
                 
@@ -414,8 +421,8 @@ class HeliCamWorker(Worker):
         self.exposures = None
         self.acquisition_thread = None
         self.h5_filepath = None
-        self.stop_acquisition_timeout = None # TODO: Use this to break out of transition_to_buffered?
-        self.exception_on_failed_shot = None
+        self.stop_acquisition_timeout = None
+        self.exception_on_failed_shot = True
         self.continuous_stop = threading.Event()
         self.continuous_thread = None
         self.continuous_dt = None
@@ -584,7 +591,8 @@ class HeliCamWorker(Worker):
             target=self.camera.grab_multiple,
             args=(self.n_images, self.images),
             kwargs={'exposures': self.exposures},
-            daemon=True,
+            # daemon=True,
+            daemon=False,
         )
         self.acquisition_thread.start()
         return {}
@@ -598,13 +606,14 @@ class HeliCamWorker(Worker):
         assert self.acquisition_thread is not None
         self.acquisition_thread.join(timeout=self.stop_acquisition_timeout)
         if self.acquisition_thread.is_alive():
+            self.logger.info("Aborting acquisition due to timeout")
             msg = """Acquisition thread did not finish. Likely did not acquire expected
                 number of images. Check triggering is connected/configured correctly"""
+            self.camera.abort_acquisition()
             if self.exception_on_failed_shot:
                 self.abort()
                 raise RuntimeError(dedent(msg))
             else:
-                self.camera.abort_acquisition()
                 self.acquisition_thread.join()
                 print(dedent(msg), file=sys.stderr)
         self.acquisition_thread = None
@@ -682,6 +691,7 @@ class HeliCamWorker(Worker):
         return True
 
     def abort(self):
+        self.logger.info(f'Abort called')
         if self.acquisition_thread is not None:
             self.camera.abort_acquisition()
             self.acquisition_thread.join()
