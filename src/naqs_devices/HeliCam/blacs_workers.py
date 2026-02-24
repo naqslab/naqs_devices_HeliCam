@@ -287,33 +287,36 @@ class HeliCamInterface(object):
             img = self.heSys.GetCamData(1, 0, 0)
 
             data = img.contents.data
-            
+
             data_array = LibHeLIC.Ptr2Arr(
                 data, (num_frames, 300, 300, 2), ct.c_int16
             )
-            
+
             # This is distinctly different from snap since all frames are to
             # be integrated over
             amplitude = data_array.sum(axis=0, dtype=np.int16).sum(axis=2, dtype=np.int16)
 
             return amplitude
-        
+
         except Exception as e:
             raise RuntimeError(f"Failed to grab frame: {e}") from e
 
     def grab_multiple(self, n_images, images, exposures=None, waitForNextBuffer=True):
         """Acquire multiple frames and append to images list"""
         print(f"Attempting to grab {n_images} images.")
-        
+
         # Note: the following logic reimplements Imaqdx's waitForNextBuffer
-        # I should make sure that it is True for external timing, but not for 
+        # I should make sure that it is True for external timing, but not for
         # internal
         
+        buf = self.heSys.Acquire()
+        print(f'Attempt to clear buffer returned: {buf}')
+
         # force -1 since Acquire's "error" state will always be -116
         res = -1
         for i in range(n_images):
             try:
-                # catch both cases where we're not triggered and not ready to 
+                # catch both cases where we're not triggered and not ready to
                 # return an image
                 while res < 1:
                     if self._abort_acquisition:
