@@ -59,7 +59,7 @@ class CamMode(IntEnum):
     INTENSITY = 3 # Manual calls this "intensity", what they mean is HDR
     SIMPLE_MAX = 4
     MIN_ENERGY = 7
-    
+
 class MockCamera(object):
     """Mock camera class that returns fake image data."""
 
@@ -107,7 +107,7 @@ class MockCamera(object):
         draw.text((10, 20), "NOT REAL DATA", font=font, fill=1)
         clean_image += 0.2 * A * np.asarray(canvas.resize((N, N)).rotate(20))
         return np.random.poisson(clean_image)
-    
+
     def stop_acquisition(self):
         pass
 
@@ -120,44 +120,44 @@ class MockCamera(object):
 
 class HeliCamInterface(object):
     """Interface to the Heliotis HeliCam C3 camera via libHeLIC.
-    
+
     This class wraps the libHeLIC library to control the HeliCam, providing
     methods for attribute configuration, image acquisition, and camera control.
-    
+
     The HeliCam is controlled via the libHeLIC Python library which communicates
     with the camera's firmware via USB. The most important registers are:
-    
+
     - SensNFrames: Number of frames to acquire
     - SensTqp: Time quarter period (to convert to demodulation frequency)
     - CamMode: Currently supported: 0: Raw IQ, 3: Intensity (HDR)
     - SensNavM2: Number of demodulation cycles per frame
-    - DdsGain: Analogue signal gain of the sensor. 
+    - DdsGain: Analogue signal gain of the sensor.
     Heliotis claims through testing DdsGain=2 (Effective gain of 1) has yielded the best SNR.
     - BSEnable: Background subtraction
     - TrigExtSrcSel: External trigger source selection
-    
+
     Attributes:
         heSys: The libHeLIC camera instance
         exception_on_failed_shot: Whether to raise on acquisition timeout
         _abort_acquisition: Flag to abort ongoing acquisition
         attributes: Dictionary tracking current attribute values
-    
+
     Note:
         The HeliCam C3 sensor has a maximum resolution of 300x300 pixels.
     """
     # Maximum sensor resolution for HeliCam C3
     MAX_SENSOR_WIDTH = 300
     MAX_SENSOR_HEIGHT = 300
-    
+
     def __init__(self, serial_number, initial_attributes):
         if LibHeLIC is None:
             raise RuntimeError(
                 "libHeLIC not found. Please install the Heliotis HeliCam Python library."
             )
-        
+
         print("Initializing HeliCam via libHeLIC...")
         self.heSys = LibHeLIC()
-        
+
         # Open camera - note: serial_number argument is for future compatibility
         # Current libHeLIC implementation uses device index
         print("Opening camera...")
@@ -166,10 +166,10 @@ class HeliCamInterface(object):
         except Exception as e:
             msg = f"Failed to open camera: {e}"
             raise RuntimeError(msg) from e
-        
+
         res = self.heSys.Acquire()
         print(f"Initial Acquire returned: {res}")
-        
+
         self.exception_on_failed_shot = True
         self._abort_acquisition = False
         self.attributes = dict(initial_attributes)
@@ -209,15 +209,15 @@ class HeliCamInterface(object):
             return [str(x.decode()) for x in attribute_dict.keys()]
         else:
             return list(self.attributes.keys())
-    
+
     def get_demod_freq(self, tqp):
         f = (70e6 / 8) * (1 / (tqp + 30))
         return f # Hz
-    
+
     def get_tqp(self, demod_freq):
         tqp = 70e6 / (8 * demod_freq) - 30
         return tqp
-    
+
     def snap(self, integrated_frames, settings: tuple | dict):
         """Acquire a single image and return it as numpy array"""
         res = self.heSys.Acquire() # WHY DOES THIS WORK????
@@ -229,20 +229,48 @@ class HeliCamInterface(object):
         cd = self.heSys.ProcessCamData(idx=1, mode=0, param=0)
         print("ProcessCamData returned", cd.contents.data)
         img = self.heSys.GetCamData(idx=1, addRef=0, meta=0)
-        
+
         data = img.contents.data
         data = LibHeLIC.Ptr2Arr(data, (integrated_frames, 300, 300, 2), ct.c_int16)
-        amplitude = data[1:,:,:,:].sum(axis=3, dtype=np.int16)
+        # amplitude = data[1:,:,:,:].sum(axis=3, dtype=np.int16)
+        amplitude = data[:,:,:,:].sum(axis=3, dtype=np.int16)
+        print(f'{amplitude.shape}')
+        if amplitude.shape[0] == 0:
+            print(f'GOT ZERO LENGTH')
+            print(amplitude)
         return amplitude
+
+    def get_framerate(self, settings: dict):
+        demod_freq = self.get_demod_freq(settings.get('SensTqp'))
+        SensNavM2 = settings.get('SensNavM2')
+        BSEnable = settings.get('BSEnable')
+        CalDur1Cyc = settings.get('CalDur1Cyc')
+        SensCaldur = settings.get('SensCaldur')
+
+        num_demod_cycles = SensNavM2*2 + 2
+        if BSEnable == 1:
+            if CalDur1Cyc == 1:
+                t_offset = 1/70e6 # should be time for one cycle
+            else:
+                t_offset = (4 * SensCaldur + 53) / 35e6
+        else:
+            # print('No background subtraction, no offset time needed')
+            t_offset = 0
+
+        delta_t = num_demod_cycles/demod_freq + t_offset
+        fps = 1 / delta_t / 10 # off by factor fudge
+        assert fps <= 3800, f"Framerate {fps} > max 3800"
+        return fps
 
     def configure_acquisition(self, continuous=True, bufferCount=1):
         """Configure camera for acquisition (buffered or continuous)"""
         settings = self.attributes.copy()
         if isinstance(settings, tuple):
             settings = dict(settings)
-        
+
         print('Initial setting of attributes in configure')
         self.set_attributes(settings)
+        print(f'Framerate is  {self.get_framerate(settings):.4f} fps')
 
         print(f'Allocating data for CamMode : {settings["CamMode"]}')
         if settings["CamMode"] == 0:
@@ -276,7 +304,7 @@ class HeliCamInterface(object):
         try:
             if self._abort_acquisition:
                 raise RuntimeError("Acquisition aborted")
-            
+
             num_frames = self.attributes.get('SensNFrames')
             num_frames = int(num_frames)
 
@@ -326,8 +354,8 @@ class HeliCamInterface(object):
                         return # thread should exit on abort
                     print(f'waiting for trigger, got {res}')
                     res = self.heSys.Acquire()
-                    
-                # exiting the while means Acquire should be responding with 
+
+                # exiting the while means Acquire should be responding with
                 # the size of the buffer *with* an image inside
                 print(f'Trigger received, got {res}')
                 if self._abort_acquisition:
@@ -337,7 +365,7 @@ class HeliCamInterface(object):
                     return # thread should exit on abort
                 images.append(self.grab(waitForNextBuffer, skipAcquire=True))
                 print(f"Got image {i+1} of {n_images}.")
-                
+
                 # Reset our error handler variable
                 res = -1
             except Exception as e:
@@ -346,7 +374,7 @@ class HeliCamInterface(object):
                 else:
                     print(f"Warning: Failed to grab image {i+1}: {e}", file=sys.stderr)
                     break
-        
+
         print(f"Got {len(images)} of {n_images} images.")
 
     def stop_acquisition(self):
@@ -354,7 +382,7 @@ class HeliCamInterface(object):
         try:
             # I have not found anything in the SDK that will actually "Stop"
             # an acquisition, but it's mostly frame by frame anyways
-            
+
             print("Acquisition stopped")
         except Exception as e:
             raise RuntimeError(f"Failed to stop acquisition: {e}") from e
@@ -385,21 +413,21 @@ class HeliCamInterface(object):
 
 class HeliCamWorker(Worker):
     """BLACS worker for HeliCam camera control and image acquisition.
-    
+
     This worker manages the complete lifecycle of a HeliCam camera including:
-    
+
     - Hardware initialization and attribute configuration
     - Continuous live preview acquisition in manual mode
     - Buffered acquisition synchronized with hardware triggers
     - Automatic HDF5 file storage of acquired images
     - Smart attribute caching to minimize unnecessary reprogramming
-    
+
     The worker runs in a separate process (via BLACS) and communicates with
     the GUI via:
     - ZMQ sockets for image transfer to the parent GUI process
     - HDF5 files for experiment configuration and image storage
     - Property dictionaries for camera attribute settings
-    
+
     Attributes:
         camera: Instance of the HeliCamInterface interface class
         interface_class: The camera interface class to instantiate
@@ -457,7 +485,7 @@ class HeliCamWorker(Worker):
             if name not in self.smart_cache or self.smart_cache[name] != value:
                 uncached_attributes[name] = value
                 self.smart_cache[name] = value
-                
+
         self.camera.set_attributes(uncached_attributes)
 
     def get_attributes_as_dict(self, visibility_level):
@@ -487,7 +515,7 @@ class HeliCamWorker(Worker):
             settings=self.manual_mode_camera_attributes,
         )
         self._send_image_to_parent(image)
-        
+
     def _send_image_to_parent(self, image):
         """Send the image to the GUI to display. This will block if the parent process
         is lagging behind in displaying frames, in order to avoid a backlog."""
@@ -520,7 +548,7 @@ class HeliCamWorker(Worker):
 
     def start_continuous(self, dt):
         """Begin continuous acquisition in a thread with minimum repetition interval dt.
-        
+
         Applies manual mode camera attributes before starting acquisition.
         """
         assert self.continuous_thread is None, "Continuous acquisition is already running."
@@ -552,7 +580,7 @@ class HeliCamWorker(Worker):
             self.continuous_dt = None
 
     def transition_to_buffered(self, device_name, h5_filepath, initial_values, fresh):
-        
+
         print(f"{initial_values=}")
         if getattr(self, 'is_remote', False):
             h5_filepath = path_to_local(h5_filepath)
@@ -576,7 +604,7 @@ class HeliCamWorker(Worker):
             self.exception_on_failed_shot = properties['exception_on_failed_shot']
             saved_attr_level = properties['saved_attribute_visibility_level']
             self.camera.exception_on_failed_shot = self.exception_on_failed_shot
-        print(f'EXPOSURES: {self.exposures=}')
+        # print(f'EXPOSURES: {self.exposures=}')
         # Only reprogram attributes that differ from those last programmed in, or all of
         # them if a fresh reprogramming was requested:
         if fresh:
@@ -721,13 +749,13 @@ class HeliCamWorker(Worker):
         return self.abort()
 
     def program_manual(self, values):
-        
+
         self.logger.info("Returning to values for manual mode")
         self.camera.set_attributes(values)
-        
+
         for k, v in values.items():
             self.manual_mode_camera_attributes[k] = v
-        
+
         print(self.camera.heSys.Acquire())
         return {}
 
