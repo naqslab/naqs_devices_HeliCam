@@ -250,7 +250,7 @@ class HeliCamInterface(object):
         Currently needs to be validated, as tests have shown that the calculated
         framerate does not always match the fastest possible achievable framerate.
         
-        Here, framerate is :math:`1/\Delta T`, where :math:`\Delta T` is the 
+        Here, framerate is :math:`1/\\Delta T`, where :math:`\\Delta T` is the 
         time between two frames set by the register `SensNFrames`.
         """
         demod_freq = self.get_demod_freq(settings.get('SensTqp'))
