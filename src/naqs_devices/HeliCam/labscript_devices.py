@@ -126,7 +126,7 @@ class HeliCam(TriggerableDevice):
                 on the libHeLIC library. Common attributes include:
                 - SensTqp: Sensor integration time
                 - SensNFrames: Number of frames to acquire
-                - CamMode: Camera mode (0=RAW_IQ, 1=AMPLITUDE, 4=SIMPLE_MAX, 5=EXTENDED_SIMPLE_MAX, etc.)
+                - CamMode: Camera Mode, Currently supporting: (0=RAW_IQ, 7=HDR)
                 - BSEnable: Background subtraction enable
                 - DdsGain: DDS gain setting
                 - TrigFreeExtN: External trigger enable
@@ -263,6 +263,7 @@ class HeliCam(TriggerableDevice):
     def frequency_to_tqp(self, freq):
         """
         Helper to get the TQP (Time Quarter Period).
+        
         The camera API maps the allowed frequency range of (2, 250) KHz to 
         (0, 4095), with 4095 corresponding to the lower frequency limit.
         

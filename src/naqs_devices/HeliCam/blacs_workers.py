@@ -211,10 +211,12 @@ class HeliCamInterface(object):
             return list(self.attributes.keys())
 
     def get_demod_freq(self, tqp):
+        """Worker level TQP to frequency conversion"""
         f = (70e6 / 8) * (1 / (tqp + 30))
         return f # Hz
 
     def get_tqp(self, demod_freq):
+        """Worker level frequency to TQP conversion"""
         tqp = 70e6 / (8 * demod_freq) - 30
         return tqp
 
@@ -241,6 +243,15 @@ class HeliCamInterface(object):
         return amplitude
 
     def get_framerate(self, settings: dict):
+        """
+        Calculate framerate given the relevant registers from the logic tree
+        detailed in the documentation.
+        Currently needs to be validated, as tests have shown that the calculated
+        framerate does not always match the fastest possible achievable framerate.
+        
+        Here, framerate is :math:`1/\Delta T`, where :math:`\Delta T` is the 
+        time between two frames set by the register `SensNFrames`.
+        """
         demod_freq = self.get_demod_freq(settings.get('SensTqp'))
         SensNavM2 = settings.get('SensNavM2')
         BSEnable = settings.get('BSEnable')
@@ -299,7 +310,9 @@ class HeliCamInterface(object):
         )
 
     def grab(self, waitForNextBuffer=True, skipAcquire=False):
-        """Acquire a single frame, returns image as np.array
+        """Acquire a single frame, returns image as np.array, usually called by
+        either :meth:`HeliCamInterface.grab_multiple` or 
+        :meth:`HeliCamWorker.continuous_loop`
         """
         try:
             if self._abort_acquisition:
@@ -580,6 +593,12 @@ class HeliCamWorker(Worker):
             self.continuous_dt = None
 
     def transition_to_buffered(self, device_name, h5_filepath, initial_values, fresh):
+        """
+        Handles acquisition shot via separate thread, where 
+        :meth:`HeliCamInterface.grab_multiple` runs at the same time as the
+        digital output triggers, since the HeliCam needs to report that it
+        received triggers with a positive response from :meth:`HeliCamInterface.heSys.Acquire`.
+        """
 
         print(f"{initial_values=}")
         if getattr(self, 'is_remote', False):
@@ -629,6 +648,7 @@ class HeliCamWorker(Worker):
         return {}
 
     def transition_to_manual(self):
+        """Handles graceful exit of acquisition thread and saving of image data."""
 
         self.logger.info('Got to transition_to_manual')
         if self.h5_filepath is None:
@@ -722,6 +742,7 @@ class HeliCamWorker(Worker):
         return True
 
     def abort(self):
+        """Aborts acquisition via acquisition thread"""
         self.logger.info(f'Abort called')
         if self.acquisition_thread is not None:
             self.camera.abort_acquisition()
@@ -749,7 +770,7 @@ class HeliCamWorker(Worker):
         return self.abort()
 
     def program_manual(self, values):
-
+        """Returns values to manual settings for control in GUI"""
         self.logger.info("Returning to values for manual mode")
         self.camera.set_attributes(values)
 
@@ -760,6 +781,7 @@ class HeliCamWorker(Worker):
         return {}
 
     def shutdown(self):
+        """Closes connection"""
         if self.continuous_thread is not None:
             self.stop_continuous()
         self.camera.close()
