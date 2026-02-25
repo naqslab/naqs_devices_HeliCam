@@ -124,13 +124,15 @@ class HeliCam(TriggerableDevice):
                 Dictionary of camera attribute names and values to be programmed into
                 the camera. The meaning of these attributes is model-specific and depends
                 on the libHeLIC library. Common attributes include:
-                - SensTqp: Sensor integration time
-                - SensNFrames: Number of frames to acquire
-                - CamMode: Camera Mode, Currently supporting: (0=RAW_IQ, 7=HDR)
-                - BSEnable: Background subtraction enable
-                - DdsGain: DDS gain setting
-                - TrigFreeExtN: External trigger enable
-                - TrigExtSrcSel: External trigger source selection
+                
+                - ``SensTqp``: Sensor integration time
+                - ``SensNFrames``: Number of frames to acquire
+                - ``CamMode``: Camera Mode, Currently supporting: (0=RAW_IQ, 7=HDR)
+                - ``BSEnable``: Background subtraction enable
+                - ``DdsGain``: DDS gain setting
+                - ``TrigFreeExtN``: External trigger enable
+                - ``TrigExtSrcSel``: External trigger source selection
+                
                 Attributes will be programmed in the order they appear in this
                 dictionary. This can be important as some attributes may not be settable
                 unless another attribute has been set first. After adding this device to
@@ -140,14 +142,14 @@ class HeliCam(TriggerableDevice):
 
             manual_mode_camera_attributes (dict, optional):
                 Dictionary of attributes that will be programmed into the camera during
-                manual mode, that differ from their values in `camera_attributes`. This
+                manual mode, that differ from their values in ``camera_attributes``. This
                 can be useful for example, to have software triggering during manual
                 mode (allowing the acquisition of frames from the BLACS manual mode
                 interface) but hardware triggering during buffered runs. Any attributes
-                in this dictionary must also be present in `camera_attributes`.
+                in this dictionary must also be present in ``camera_attributes``.
 
             stop_acquisition_timeout (float), default: `5.0`:
-                How long, in seconds, to wait during `transition_to_buffered` for the
+                How long, in seconds, to wait during :meth:`transition_to_buffered` for the
                 acquisition of images to complete before giving up. Whilst all triggers
                 should have been received, this can be used to allow for slow image
                 download time.

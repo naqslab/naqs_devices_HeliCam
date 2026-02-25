@@ -144,6 +144,7 @@ class HeliCamInterface(object):
 
     Note:
         The HeliCam C3 sensor has a maximum resolution of 300x300 pixels.
+        Other modes (which are currently not supported) use fewer than the maximum.
     """
     # Maximum sensor resolution for HeliCam C3
     MAX_SENSOR_WIDTH = 300
