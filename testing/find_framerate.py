@@ -31,8 +31,8 @@ try:
 
     sys.path.insert(0, prgPath + r"\Heliotis\heliCam\Python\wrapper")
     from libHeLIC import LibHeLIC  # noqa: E402
-except ImportError:
-    raise LabscriptError("Could not find LibHeLIC, is HeliSDK properly installed?")
+except ImportError as e:
+    raise e("Could not find LibHeLIC, is HeliSDK properly installed?") # type: ignore
 
 
 def get_demod_freq(SensTqp: int):
@@ -507,12 +507,36 @@ def start_prawn():
     """
     Merely sends the software start command.
     Currently with a fudged sleep time to ensure we don't start before the
-    camera is ready, will change
+    camera polling loop is ready, will change
     """
     time.sleep(5)  # warmup time to ensure polling is in fact on - can this be checked?
     logger.info(send("swr"))
      
-def automated_checking_binary_search(SensNFrames: int, SensNavM2: int, SensTqp: int, times_to_test=None):
+def automated_checking_binary_search(
+    SensNFrames: int,
+    SensNavM2: int,
+    SensTqp: int,
+    times_to_test=None,
+    tolerance=0.001,
+    max_iters=15,
+):
+    """
+    Given the parameter triple of (`SensNFrames`,`SensNavM2`, `SensTqp`),
+    tests for the fastest achievable duration between pictures via a binary search.
+
+    Args:
+        SensNFrames (int): Number of Frames
+        SensNavM2 (int): Register for (number of demod cycles - 2 )/ 2
+        SensTqp (int): Time quarter period
+        times_to_test (_type_, optional): Option to pass in time grid. 
+        Defaults to None so that later initializes to powers of ten in arange(5, 9).
+        tolerance (float, optional): Binary search tolerance in seconds.
+        max_iters (int, optional): Binary search max iterations.
+
+    Raises:
+        TimeoutError: Uses the TimeoutError in binary search to check if we need to slow down.
+        Will otherwise speed up.
+    """
 
     cam = HeliCamInterface()
     settings = (
@@ -548,14 +572,13 @@ def automated_checking_binary_search(SensNFrames: int, SensNavM2: int, SensTqp: 
     
     # if you pass in `times_to_test` then we'll defer to that but otherwise
     # its set here
-    
     if times_to_test is None:
         # descending, but should be at worst case 10 seconds
         # define a coarse grid over powers of ten
         powers_of_ten = 10 ** np.arange(5, 10)
         times_to_test = powers_of_ten
         # times_to_test = np.array([2 * 10**8, 10**8, 5 * 10**7])
-    failed_arr = np.zeros_like(times_to_test, dtype=bool)
+    # failed_arr = np.zeros_like(times_to_test, dtype=bool)
     
     # initialize a binary search / bisect method over the times
     # outer loop searches over durations
@@ -565,8 +588,8 @@ def automated_checking_binary_search(SensNFrames: int, SensNavM2: int, SensTqp: 
     # step = mid - left
     
     ind = 0
-    # while step / 100e6 > 0.5: # don't forget we're actually in clock cycles, but the tolerance is in s
-    while (right - left) / 100e6 > 0.5 and ind < 15: # don't forget we're actually in clock cycles, but the tolerance is in s
+    # don't forget we're actually in clock cycles, but the tolerance is in s
+    while (right - left) / 100e6 > tolerance and ind < max_iters: 
         
         mid = (right + left) // 2
         duration = mid
@@ -574,16 +597,17 @@ def automated_checking_binary_search(SensNFrames: int, SensNavM2: int, SensTqp: 
         ## <<<<< make this a function??
         images = np.empty((n_acquisitions, 300, 300))
         send("cls")  # clear DO memory
-        program_prawndo(duration=duration, reps=n_acquisitions)
+        # program_prawndo(duration=duration, reps=n_acquisitions)
         ready = False
         ready = check_ready()
         while not ready:
             logger.info("WARNING: Something went wrong trying to program PrawnDO")
             logger.info(send("abt"))
             logger.info(send("cls"))
-            program_prawndo(duration=duration, reps=n_acquisitions)
             time.sleep(3)
             ready = check_ready()
+            logger.info(f'{ready=}')
+        program_prawndo(duration=duration, reps=n_acquisitions)
 
         # call start from a different thread than the while loop
         t = threading.Thread(target=start_prawn, daemon=True)
@@ -593,20 +617,21 @@ def automated_checking_binary_search(SensNFrames: int, SensNavM2: int, SensTqp: 
             acquisition_times = []
             res = -1
             # fudge how long the acquisition should never be longer than?
+            # This includes the time that the DO waits for the polling loop to start
             # inner loop over each acquisition
             for i in range(n_acquisitions):
                 deadline = (
-                    5 + time.perf_counter() + duration / (100 * MHZ) * 6
-                )  # 6x margin?? TODO: Make this a DO check
+                    5 + time.perf_counter() + duration / (100 * MHZ) * 3
+                )  # 3x margin?? TODO: Make this a DO check
                 while res < 1:
                     if time.perf_counter() > deadline:
                         raise TimeoutError(
                             f"Acquire() timeout with duration {duration}"
                         )
-                    logger.info(f"waiting, got {res}")
+                    logger.info(f"[Camera polling] waiting, got {res}")
                     t_before = time.perf_counter_ns()
                     res = cam.heSys.Acquire()
-                logger.info(f"Triggered, got {res}")
+                logger.info(f"[Camera polling] Triggered, got {res}")
                 images[i], t_after = image_from_buffer(cam)
                 acquisition_times.append((t_after - t_before))  # should be T_acquisition
                 res = -1
@@ -661,13 +686,13 @@ def automated_checking_binary_search(SensNFrames: int, SensNavM2: int, SensTqp: 
     # save after loop to aggregate
     if SAVE:
         np.savez(
-            file=os.path.join("results", f"f{n_frames}_d{n_demod_cycles}_t{tqp}.npz"),
+            file=os.path.join("results", "binary_search", f"f{n_frames}_d{n_demod_cycles}_t{tqp}.npz"),
             images=images,
             fastest_time=fastest_time,
             iters=ind,
+            tolerance=tolerance,
             acquisition_times=acquisition_times,
             duration=duration,
-            failed_arr=failed_arr,
             times_to_test=times_to_test,
             settings=np.array((n_frames, n_demod_cycles, tqp)),
         )
@@ -812,7 +837,7 @@ def check_ready():
     resp = send("sts")
     match = re.match(r"run-status:(\d) clock-status:(\d)(\r\n)?", resp)
     status = int(match.group(1)), int(match.group(2))
-    ready = status[0] == 0
+    ready = status[0] == 0 or 5
     if ready:
         logger.info("PrawnDO Ready!")
     else:
@@ -824,20 +849,21 @@ def check_ready():
 if __name__ == "__main__":
     """
     TODO:
-    - Measure USB comm speed
+    [x] Measure USB comm speed:
         - set 100 frames, get acquisition time
-    - Debug 10s fails, but 1s success
-    - Make Gradient descent loop
+        - Got ~ the speed of the usb readout for acq time 
+    [] Debug 10s fails, but 1s success
+    [x] Make Gradient descent loop
     """
 
     import threading
     from itertools import product
     import re
+    SAVE = True
 
-    frame_vals = [1, 200, 500]
-    NavM2_vals = [1, 200]
-    tqp_vals = [4095, 1]
-    SAVE = False
+    frame_vals = [1, 100, 500]
+    NavM2_vals = [1, 50, 200]
+    tqp_vals = [4095, 2000, 1]
     combos = list(product(frame_vals, NavM2_vals, tqp_vals))
     # for idx, (f, d, t) in enumerate(combos):
     # resp = send('sts')
@@ -854,10 +880,13 @@ if __name__ == "__main__":
     # resp = send("sts")
     # match = re.match(r"run-status:(\d) clock-status:(\d)(\r\n)?", resp)
     # status = int(match.group(1)), int(match.group(2))
-    ready = check_ready()
-    if ready:
-        logger.info("PrawnDO Ready!")
-        # logger.info(f'Testing combo {idx+1}/{len(combos)}: {(f, d, t)}')
-        automated_checking_binary_search(SensNFrames=100, SensNavM2=1, SensTqp=4095)
-    else:
-        print("PrawnDO not ready")
+
+    # for f_vals in [1, 100, 500]:
+    for idx, (f, d, t) in enumerate(combos):
+        ready = check_ready()
+        if ready:
+            logger.info("PrawnDO Ready!")
+            logger.info(f"Testing combo {idx + 1}/{len(combos)}: {(f, d, t)}")
+            automated_checking_binary_search(SensNFrames=f, SensNavM2=d, SensTqp=t)
+        else:
+            print("PrawnDO not ready")
