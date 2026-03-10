@@ -239,7 +239,7 @@ class HeliCamInterface(object):
         amplitude = data[:,:,:,:].sum(axis=3, dtype=np.int16)
         print(f'{amplitude.shape}')
         if amplitude.shape[0] == 0:
-            print(f'GOT ZERO LENGTH')
+            print('GOT ZERO LENGTH')
             print(amplitude)
         return amplitude
 
@@ -249,8 +249,8 @@ class HeliCamInterface(object):
         detailed in the documentation.
         Currently needs to be validated, as tests have shown that the calculated
         framerate does not always match the fastest possible achievable framerate.
-        
-        Here, framerate is :math:`1/\\Delta T`, where :math:`\\Delta T` is the 
+
+        Here, framerate is :math:`1/\\Delta T`, where :math:`\\Delta T` is the
         time between two frames set by the register `SensNFrames`.
         """
         demod_freq = self.get_demod_freq(settings.get('SensTqp'))
@@ -270,8 +270,8 @@ class HeliCamInterface(object):
             t_offset = 0
 
         delta_t = num_demod_cycles/demod_freq + t_offset
-        fps = 1 / delta_t / 10 # off by factor fudge
-        assert fps <= 3800, f"Framerate {fps} > max 3800"
+        fps = 1 / delta_t
+        print(f"WARNING: Requested Framerate {fps} > max 3800")
         return fps
 
     def configure_acquisition(self, continuous=True, bufferCount=1):
@@ -312,7 +312,7 @@ class HeliCamInterface(object):
 
     def grab(self, waitForNextBuffer=True, skipAcquire=False):
         """Acquire a single frame, returns image as np.array, usually called by
-        either :meth:`HeliCamInterface.grab_multiple` or 
+        either :meth:`HeliCamInterface.grab_multiple` or
         :meth:`HeliCamWorker.continuous_loop`
         """
         try:
@@ -350,7 +350,7 @@ class HeliCamInterface(object):
         # Note: the following logic reimplements Imaqdx's waitForNextBuffer
         # I should make sure that it is True for external timing, but not for
         # internal
-        
+
         buf = self.heSys.Acquire()
         print(f'Attempt to clear buffer returned: {buf}')
 
@@ -595,7 +595,7 @@ class HeliCamWorker(Worker):
 
     def transition_to_buffered(self, device_name, h5_filepath, initial_values, fresh):
         """
-        Handles acquisition shot via separate thread, where 
+        Handles acquisition shot via separate thread, where
         :meth:`HeliCamInterface.grab_multiple` runs at the same time as the
         digital output triggers, since the HeliCam needs to report that it
         received triggers with a positive response from :meth:`HeliCamInterface.heSys.Acquire`.
@@ -619,6 +619,8 @@ class HeliCamWorker(Worker):
             properties = labscript_utils.properties.get(
                 f, self.device_name, 'device_properties'
             )
+
+            # TODO: Verify camera_attributes is correctly changed per shot
             camera_attributes = properties['camera_attributes']
             self.stop_acquisition_timeout = properties['stop_acquisition_timeout']
             self.exception_on_failed_shot = properties['exception_on_failed_shot']
