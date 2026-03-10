@@ -4,7 +4,6 @@ import matplotlib.pyplot as plt
 import matplotlib as mpl
 import numpy as np
 import ctypes as ct
-import numpy as np
 from enum import Enum
 from enum import IntEnum
 import serial
@@ -415,7 +414,7 @@ class HeliCamInterface:
         try:
             self.heSys.Close()
         except Exception as e:
-            logger.info(f"Warning: Error closing camera: {e}", file=sys.stderr)
+            logger.info(f"Warning: Error closing camera: {e}", sys.stderr)
 
 
 def image_from_buffer(cam):
@@ -487,11 +486,11 @@ def view_images(images, n=10):
     plt.show()
 
 
-def program_prawndo(duration, reps):
+def program_prawndo(duration, reps, trigger_width=1100):
     """Puts the pulse instructions into the PrawnDO's memory"""
 
     # For HeliCam, trigger_width is > 10us. 1100 cycles at 100MHz = 11us
-    trigger_width = 1100
+    # trigger_width = 1100
 
     bits = [1, 0] * reps + [1, 1]
     cycles = [duration, trigger_width] * reps + [0, 0]
@@ -528,14 +527,14 @@ def automated_checking_binary_search(
         SensNFrames (int): Number of Frames
         SensNavM2 (int): Register for (number of demod cycles - 2 )/ 2
         SensTqp (int): Time quarter period
-        times_to_test (_type_, optional): Option to pass in time grid. 
+        times_to_test (_type_, optional): Option to pass in time grid, must be sorted from low to high. 
         Defaults to None so that later initializes to powers of ten in arange(5, 9).
         tolerance (float, optional): Binary search tolerance in seconds.
         max_iters (int, optional): Binary search max iterations.
 
     Raises:
-        TimeoutError: Uses the TimeoutError in binary search to check if we need to slow down.
-        Will otherwise speed up.
+        TimeoutError: Uses the TimeoutError in binary search to check if we 
+        need to slow down. Will otherwise speed up.
     """
 
     cam = HeliCamInterface()
@@ -579,6 +578,8 @@ def automated_checking_binary_search(
         times_to_test = powers_of_ten
         # times_to_test = np.array([2 * 10**8, 10**8, 5 * 10**7])
     # failed_arr = np.zeros_like(times_to_test, dtype=bool)
+    times_to_test = times_to_test.astype(int)
+    logger.info(f'Test times: {times_to_test}')
     
     # initialize a binary search / bisect method over the times
     # outer loop searches over durations
@@ -588,9 +589,11 @@ def automated_checking_binary_search(
     # step = mid - left
     
     ind = 0
+    logger.info("=" * 79)
+    logger.info("============= RUN START =============")
+    logger.info("=" * 79)
     # don't forget we're actually in clock cycles, but the tolerance is in s
-    while (right - left) / 100e6 > tolerance and ind < max_iters: 
-        
+    while abs(right - left) / 100e6 > tolerance and ind < max_iters: 
         mid = (right + left) // 2
         duration = mid
         
@@ -666,7 +669,11 @@ def automated_checking_binary_search(
     logger.info("============= RUN FINISHED =============")
     logger.info("=" * 79)
     # logger.info(f'[Binary Search] fastest achieved: {fastest_time:e}s in {ind} iterations')
-    logger.info(f'[Binary Search] fastest achieved: {fastest_time:.3e}s in {ind} iterations' if fastest_time else 'No successful acquisition found')
+    logger.info(
+        f"[Binary Search] fastest achieved: {fastest_time:.3e}s in {ind} iterations"
+        if fastest_time
+        else "No successful acquisition found"
+    )
     logger.info(f"{supposed_frm_dur*10**6=:.4f} microseconds")
     logger.info(f"{supposed_acq_dur*10**6=:.4f} microseconds")
     logger.info(f"supposed_fps={1 / supposed_frm_dur} fps")
@@ -836,7 +843,12 @@ def check_ready():
 
     resp = send("sts")
     match = re.match(r"run-status:(\d) clock-status:(\d)(\r\n)?", resp)
-    status = int(match.group(1)), int(match.group(2))
+    # This isn't the most 1 to 1 capture of the DO not responding but I want to
+    # be explicit that this failure state means you have to restart
+    if match is not None:
+        status = int(match.group(1)), int(match.group(2))
+    else:
+        raise RuntimeError('DO did not respond and most likely needs to be restarted')
     ready = status[0] == 0 or 5
     if ready:
         logger.info("PrawnDO Ready!")
@@ -845,15 +857,131 @@ def check_ready():
 
     return ready
 
+def external_frequency_test(SensNFrames: int, SensNavM2: int, times_to_test=None):
+    cam = HeliCamInterface()
+
+    settings = (
+        ## Required:
+        ("CamMode", CamMode.RAW_IQ),
+        ("SensNFrames", SensNFrames),
+        ("BSEnable", 0),
+        # required for external acquisition trigger
+        ("TrigFreeExtN", 0),  # 0: external triggering, 1: internal
+        # ('TrigFreeExtN', 1),
+        ("SensTqp", 4095),
+        ("ExtTqp", 1),
+        # ("SensTqp", 4095),  # (1, 4095)
+        ('ExtTqpPuls', 1),
+        ("EnTrigOnPos", 0),
+        ("SingleVolume", 0),
+        ## Optional:
+        # ('SingleVolume', 1),
+        ("SensNavM2", SensNavM2),  # (1, 255)
+        ("DdsGain", 2),  # (1, 3), default was 2, manual says best SNR is 2
+        ("TrigExtSrcSel", 0),  # selects triggering source (only one)
+        ("AcqStop", 0),  # 0: Acquisition running, 1: Acquisition stopped
+        ("EnSynFOut", 0),  # Provides the sync freq on OUT3 (and encoder??)
+    )
+    settings = dict(settings)
+
+    cam.set_settings(settings)
+    n_frames = int(cam.view_setting("SensNFrames"))
+    n_demod_cycles = int(cam.view_setting("SensNavM2")) * 2 + 2
+    tqp = int(cam.view_setting("SensTqp"))
+
+    cam.heSys.AllocCamData(1, LibHeLIC.CamDataFmt["DF_I16Q16"], 0, 0, 0)
+
+    n_acquisitions = 3
+    
+    # if you pass in `times_to_test` then we'll defer to that but otherwise
+    # its set here
+    if not times_to_test:
+        # descending, but should be at worst case 10 seconds
+        # define a coarse grid over powers of ten
+        powers_of_ten = 10 ** np.arange(5, 9)[::-1]
+        times_to_test = powers_of_ten
+    failed_arr = np.zeros_like(times_to_test, dtype=bool)
+    times_to_test = times_to_test.astype(int)
+    
+    # outer loop searches over durations
+    for ind, duration in enumerate(times_to_test):
+        images = np.empty((n_acquisitions, 300, 300))
+        send("cls")  # clear DO memory
+        # program_prawndo(duration=duration, reps=n_acquisitions)
+        ready = False
+        ready = check_ready()
+        while not ready:
+            logger.info("WARNING: Something went wrong trying to program PrawnDO")
+            logger.info(send("abt"))
+            logger.info(send("cls"))
+            time.sleep(3)
+            ready = check_ready()
+            logger.info(f'{ready=}')
+        program_prawndo(duration=duration, reps=n_acquisitions, trigger_width=1100*20)
+
+        # call start from a different thread than the while loop
+        t = threading.Thread(target=start_prawn, daemon=True)
+        t.start()
+
+        try:
+            times = []
+            res = -1
+            # fudge how long the acquisition should never be longer than?
+            # inner loop over each acquisition
+            for i in range(n_acquisitions):
+                deadline = (
+                    5 + time.perf_counter() + duration / (100 * MHZ) * 6
+                )  # 6x margin?? TODO: Make this a DO check
+                while res < 1:
+                    if time.perf_counter() > deadline:
+                        # failed_arr[ind] = True
+                        raise TimeoutError(
+                            f"Acquire() timeout with duration {duration}"
+                        )
+                    logger.info(f"waiting, got {res}")
+                    t_before = time.perf_counter_ns()
+                    res = cam.heSys.Acquire()
+                logger.info(f"Triggered, got {res}")
+                images[i], t_after = image_from_buffer(cam)
+                # t_after = time.perf_counter_ns()
+                times.append((t_after - t_before))  # should be T_acquisition
+                res = -1
+
+            t.join()
+            logger.info(f"Measured readout {times=}")
+        except Exception as e:
+            logger.info(
+                f"{e} on combo {(n_frames, n_demod_cycles, tqp)} with duration {duration / 100e6} s"
+            )
+            # Skip the rest, no reason to test more if we timed out
+            failed_arr[ind:] = True
+            break
+
+    logger.info(f"{cam.heSys.Close()=}")
+    logger.info(f"{tqp=}")
+    
+    view_images(images,n=n_acquisitions)
+
+    # save after loop to aggregate
+    if SAVE:
+        np.savez(
+            file=os.path.join("results", "ext_tqp", f"f{n_frames}_d{n_demod_cycles}.npz"),
+            images=images,
+            times=times,
+            duration=duration,
+            failed_arr=failed_arr,
+            times_to_test=times_to_test,
+            settings=np.array((n_frames, n_demod_cycles, tqp)),
+        )
 
 if __name__ == "__main__":
     """
-    TODO:
     [x] Measure USB comm speed:
         - set 100 frames, get acquisition time
         - Got ~ the speed of the usb readout for acq time 
-    [] Debug 10s fails, but 1s success
-    [x] Make Gradient descent loop
+    [x] Debug 10s fails, but 1s success
+        - PrawnDO returned run-status 5, now properly handled
+    [x] Make binary search loop
     """
 
     import threading
@@ -861,32 +989,56 @@ if __name__ == "__main__":
     import re
     SAVE = True
 
-    frame_vals = [1, 100, 500]
-    NavM2_vals = [1, 50, 200]
-    tqp_vals = [4095, 2000, 1]
-    combos = list(product(frame_vals, NavM2_vals, tqp_vals))
-    # for idx, (f, d, t) in enumerate(combos):
-    # resp = send('sts')
-    # match = re.match(r"run-status:(\d) clock-status:(\d)(\r\n)?", resp)
-    # status = int(match.group(1)), int(match.group(2))
-    # ready = status[0] == 0
-    # if ready:
-    #     logger.info('PrawnDO Ready!')
-    #     logger.info(f'Testing combo {idx+1}/{len(combos)}: {(f, d, t)}')
-    #     # automated_checking(f, d, t)
-    # else:
-    #     logger.info('PrawnDO not ready')
+    ## Can increase granularity of parameters if desired
+    # frame_vals = [1, 100, 500]
+    # NavM2_vals = [1, 50, 200]
+    # tqp_vals = [4095, 2000, 1]
+    # combos = list(product(frame_vals, NavM2_vals, tqp_vals))
+    # # for idx, (f, d, t) in enumerate(combos):
+    # # resp = send('sts')
+    # # match = re.match(r"run-status:(\d) clock-status:(\d)(\r\n)?", resp)
+    # # status = int(match.group(1)), int(match.group(2))
+    # # ready = status[0] == 0
+    # # if ready:
+    # #     logger.info('PrawnDO Ready!')
+    # #     logger.info(f'Testing combo {idx+1}/{len(combos)}: {(f, d, t)}')
+    # #     # automated_checking(f, d, t)
+    # # else:
+    # #     logger.info('PrawnDO not ready')
 
-    # resp = send("sts")
-    # match = re.match(r"run-status:(\d) clock-status:(\d)(\r\n)?", resp)
-    # status = int(match.group(1)), int(match.group(2))
+    # # resp = send("sts")
+    # # match = re.match(r"run-status:(\d) clock-status:(\d)(\r\n)?", resp)
+    # # status = int(match.group(1)), int(match.group(2))
 
-    # for f_vals in [1, 100, 500]:
-    for idx, (f, d, t) in enumerate(combos):
-        ready = check_ready()
-        if ready:
-            logger.info("PrawnDO Ready!")
-            logger.info(f"Testing combo {idx + 1}/{len(combos)}: {(f, d, t)}")
-            automated_checking_binary_search(SensNFrames=f, SensNavM2=d, SensTqp=t)
-        else:
-            print("PrawnDO not ready")
+    ## Retrying some of the tests that failed by trying to go slower
+    ## This inevitably proved to still fail. 
+    # failed_combos = [
+    #     # (100, 1, 1),
+    #     (100, 200, 4095),
+    #     (100, 200, 2000),
+    #     (100, 50, 4095),
+    #     (500, 50, 4095),
+    #     (500, 1, 1),
+    #     (500, 50, 2000),
+    #     (500, 200, 2000),
+    # ]
+    # longer_times = np.array([5, 25]) * 100e6 # convert seconds to 100 MHz clock cycles
+    # for idx, (f, d, t) in enumerate(failed_combos):
+    #     ready = check_ready()
+    #     if ready:
+    #         logger.info(f"Testing combo {idx + 1}/{len(failed_combos)}: {(f, d, t)}")
+    #         automated_checking_binary_search(
+    #             SensNFrames=f,
+    #             SensNavM2=d,
+    #             SensTqp=t,
+    #             times_to_test=longer_times,
+    #             tolerance=0.5,
+    #         )
+    #     else:
+    #         print("PrawnDO not ready")
+    
+    external_frequency_test(
+        SensNFrames=10,
+        SensNavM2=20,
+        times_to_test=np.array([2], dtype=int) * 100e6,
+    )
