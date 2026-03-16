@@ -40,7 +40,10 @@
 
 ### Example Connection Tables
 
-#### Normal mode
+#### Normal mode (internal demodulation frequency)
+
+The connection table below will initialize the camera's settings, but each can
+be changed per/in shot with say, a runmanager global in your experiment script.
 
 ```python
 
@@ -71,7 +74,7 @@ settings = {
     "CamMode": 0, # RawIQ
     "DdsGain": 2, # Gain of 1, level 2 of 3
     "BSEnable": 0, # Background subtraction
-    "TrigFreeExtN": 0, # External timing
+    "TrigFreeExtN": 0, # External acquisition timing (here from the PrawnDO)
     'ExtTqp': 0, # Internal Tqp
     'EnTrigOnPos': 0, # No translation stage
     "TrigExtSrcSel": 0, # Default ext trigger source
@@ -98,7 +101,17 @@ if __name__ == "__main__":
 
 ```
 
-#### ExtTqp mode
+#### ExtTqp mode (user provides demodulation schedule)
+
+In ExtTqp mode, the sampling time schedule is a square wave input on IN3 (the
+encoder port on the HeliDriver). In this mode, the `SensTqp` register assigns the
+integration duration of a single sample, where you must follow:
+
+$\frac{(\text{SensTqp} + 11)}{35 \text{MHz}} < T_{\text{pulsewidth}}$,
+
+where $T_{\text{pulsewidth}}$ refers to the square wave on IN3. The following
+connection table shows that setting the `SensTqp` register is only required to
+initialize the device, and will be updated during the shot.
 
 ```python
 
@@ -129,7 +142,7 @@ settings = {
     "CamMode": 0, # RawIQ
     "DdsGain": 2, # Gain of 1, level 2 of 3
     "BSEnable": 0, # Background subtraction
-    "TrigFreeExtN": 0, # External timing
+    "TrigFreeExtN": 0, # External acquisition timing (here from the PrawnDO)
     'ExtTqp': 1, # External Tqp
     'ExtTqpPuls': 1, # Enable PhiA and PhiB on Encoder
     'EnTrigOnPos': 0, # No translation stage
@@ -172,8 +185,10 @@ if __name__ == "__main__":
     # Capital variables are runmanager globals
     start()
 
-    camera.camera_attributes["SensTqp"] = camera.frequency_to_tqp(DEMOD_FREQ)
     camera.camera_attributes["SensNFrames"] = N_FRAMES
+    camera.camera_attributes["SensNavM2"] = SENSNAVM2 
+    # Only necessary to provide SensTqp when demodulation freq is internal
+    camera.camera_attributes["SensTqp"] = camera.frequency_to_tqp(DEMOD_FREQ)
     
     print(f"RUNMANAGER says: {camera.camera_attributes}")
     t = 0
@@ -230,11 +245,11 @@ The important user controllable parameters in the GUI are:
 
 | Parameter | Explanation | Range |
 | --------- | ----------- | ----- |
-| `SensNFrames` | The number of frames in a fully integrated image, called a volume | (10, 511) |
+| `SensNFrames` | The number of frames in a fully integrated image, called a volume | (1, 511) |
 | `SensNavM2` | The number of demodulation cycles per frame $N_C$ is `SensNavM2`*2 + 2 | (0, 255) |
 | `SensTqp` | The time quarter period of the sensor demodulation stage | (0, 4095) |
 
-Note that the demodulation frequency $f_d$ is found from $f_d = \frac{f_{sensor}}{8(SensTqp + 30)}$ where the sensor frequency $f_{sensor}$ is 70 MHz.
+Note that the demodulation frequency $f_d$ is found from $f_d = \frac{f_{\text{sensor}}}{8(\text{SensTqp} + 30)}$ where the sensor frequency $f_{\text{sensor}}$ is 70 MHz.
 
 The BLACS tab provides `snap` and `continuous` acquisitions. The logs will report
 many calls to the LibHeLIC's `Acquire()`, which returns either a negative value (usually -116)
@@ -246,10 +261,10 @@ In testing, we have found that the C3's purported framerate upper limit of
 3800 fps is not always achievable given settings that follow the stated
 specification of:
 
-$FPS = \frac{1}{\Delta_{T_{frame}}} = \frac{f_{demod}}{N_C} + T_{offset}$,
+$FPS = \frac{1}{\Delta_{T_{\text{frame}}}} = \frac{f_{\text{demod}}}{N_C} + T_{\text{offset}}$,
 
-where $T_{offset}$ is set by the background subtraction registers. If background
-subtraction is not used, $T_{offset} = 0$. A [testing script](testing/find_framerate.py)
+where $T_{\text{offset}}$ is set by the background subtraction registers. If background
+subtraction is not used, $T_{\text{offset}} = 0$. A [testing script](testing/find_framerate.py)
 is provided that explores the outer product of the parameter space of `SensNFrames`,
 `SensNavM2`, and `SensTqp` in an attempt to characterize the limits to both
 framerate and acquisition rate. The method employs a binary search algorithm and
