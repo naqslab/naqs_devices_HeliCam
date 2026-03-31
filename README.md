@@ -264,7 +264,7 @@ specification of:
 $FPS = \frac{1}{\Delta_{T_{\text{frame}}}} = \frac{f_{\text{demod}}}{N_C} + T_{\text{offset}}$,
 
 where $T_{\text{offset}}$ is set by the background subtraction registers. If background
-subtraction is not used, $T_{\text{offset}} = 0$. A [testing script](testing/find_framerate.py)
+subtraction is not used, $T_{\text{offset}} = 0$. A [testing script](testing/run_timing_tests.py)
 is provided that explores the outer product of the parameter space of `SensNFrames`,
 `SensNavM2`, and `SensTqp` in an attempt to characterize the limits to both
 framerate and acquisition rate. The method employs a binary search algorithm and
